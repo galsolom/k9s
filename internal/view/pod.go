@@ -259,13 +259,9 @@ func resumeShellIn(a *App, c model.Component, path, co string) {
 	shellIn(a, path, co)
 }
 
-func shellIn(a *App, fqn, co string) {
-	os, err := getPodOS(a.factory, fqn)
-	if err != nil {
-		log.Warn().Err(err).Msgf("os detect failed")
-	}
-	args := computeShellArgs(fqn, co, a.Conn().Config().Flags().KubeConfig, os)
-
+func shellIn(a *App, path, co string) {
+	os := getPodOS(a.factory, path)
+	args := computeShellArgs(path, co, a.Conn().Config().Flags().KubeConfig, os)
 	c := color.New(color.BgGreen).Add(color.FgBlack).Add(color.Bold)
 	if !runK(a, shellOpts{clear: true, banner: c.Sprintf(bannerFmt, fqn, co), args: args}) {
 		a.Flash().Err(errors.New("Shell exec failed"))
@@ -316,10 +312,11 @@ func attachIn(a *App, path, co string) {
 
 func computeShellArgs(path, co string, kcfg *string, os string) []string {
 	args := buildShellArgs("exec", path, co, kcfg)
-	if os == windowsOS {
-		return append(args, "--", powerShell)
+	if os == "windows" {
+		return append(args, "--", "powershell")
+	} else {
+		return append(args, "--", "sh", "-c", shellCheck)
 	}
-	return append(args, "--", "sh", "-c", shellCheck)
 }
 
 func buildShellArgs(cmd, path, co string, kcfg *string) []string {
@@ -384,20 +381,22 @@ func podIsRunning(f dao.Factory, path string) bool {
 	return re.Phase(po) == render.Running
 }
 
-func getPodOS(f dao.Factory, fqn string) (string, error) {
-	po, err := fetchPod(f, fqn)
+func getPodOS(f dao.Factory, path string) string {
+	po, err := fetchPod(f, path)
 	if err != nil {
-		return "", err
-	}
-	if os, ok := po.Spec.NodeSelector[osBetaSelector]; ok {
-		return os, nil
-	}
-	os, ok := po.Spec.NodeSelector[osSelector]
-	if !ok {
-		return "", fmt.Errorf("no os information available")
+		log.Error().Err(err).Msg("unable to fetch pod")
+		return ""
 	}
 
-	return os, nil
+	if os, success := po.Spec.NodeSelector["beta.kubernetes.io/os"]; success {
+		return os
+	}
+
+	if os, success := po.Spec.NodeSelector["kubernetes.io/os"]; success {
+		return os
+	}
+
+	return ""
 }
 
 func resourceSorters(t *Table) ui.KeyActions {
